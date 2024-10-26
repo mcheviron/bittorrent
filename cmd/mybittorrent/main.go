@@ -8,9 +8,23 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/go-viper/mapstructure/v2"
 	"go.uber.org/zap"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
+
+type torrentInfo struct {
+	Announce  string    `json:"announce"`
+	CreatedBy string    `json:"created by"`
+	Info      innerInfo `json:"info"`
+}
+
+type innerInfo struct {
+	Length      int    `json:"length"`
+	Name        string `json:"name"`
+	PieceLength int    `json:"piece length"`
+	Pieces      string `json:"pieces"`
+}
 
 func init() {
 	var err error
@@ -27,7 +41,6 @@ func main() {
 	command := os.Args[1]
 
 	if command == "decode" {
-
 		bencodedValue := os.Args[2]
 
 		decoded, _, err := decode(bencodedValue)
@@ -38,10 +51,49 @@ func main() {
 
 		jsonOutput, _ := json.Marshal(decoded)
 		fmt.Println(string(jsonOutput))
+	} else if command == "info" {
+		if len(os.Args) < 3 {
+			logger.Error("File path is required for info command")
+			os.Exit(1)
+		}
+		filePath := os.Args[2]
+
+		fileContent, err := os.ReadFile(filePath)
+		if err != nil {
+			logger.Error("Failed to read file", zap.Error(err))
+			os.Exit(1)
+		}
+
+		info, err := info(string(fileContent))
+		if err != nil {
+			logger.Error("Failed to decode file content", zap.Error(err))
+			os.Exit(1)
+		}
+
+		fmt.Printf("Tracker URL: %s\nLength: %d\n", info.Announce, info.Info.Length)
 	} else {
 		logger.Error("Unknown command", zap.String("command", command))
 		os.Exit(1)
 	}
+}
+
+func info(bencodedString string) (*torrentInfo, error) {
+	decoded, _, err := decode(bencodedString)
+	if err != nil {
+		return nil, err
+	}
+
+	decodedMap, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("decoded data is not a dictionary")
+	}
+
+	var torrentInfo torrentInfo
+	if err := mapstructure.Decode(decodedMap, &torrentInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode torrent info: %v", err)
+	}
+
+	return &torrentInfo, nil
 }
 
 func decode(bencodedString string) (any, int, error) {

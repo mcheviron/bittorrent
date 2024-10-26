@@ -10,6 +10,9 @@ module github.com/codecrafters-io/bittorrent-starter-go
 
 go 1.22
 
-require go.uber.org/zap v1.27.0
+require (
+	github.com/go-viper/mapstructure/v2 v2.2.1
+	go.uber.org/zap v1.27.0
+)
 
 require go.uber.org/multierr v1.10.0 // indirect
