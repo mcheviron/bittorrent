@@ -60,7 +60,17 @@ func main() {
 			os.Exit(1)
 		}
 
-		fmt.Printf("Tracker URL: %s\nLength: %d\nInfo Hash: %s\n", info.Announce, info.Info.Length, hash)
+		fmt.Printf("Tracker URL: %s\n", info.Announce)
+		fmt.Printf("Length: %d\n", info.Info.Length)
+		fmt.Printf("Info Hash: %s\n", hash)
+		fmt.Printf("Piece Length: %d\n", info.Info.PieceLength)
+		fmt.Println("Piece Hashes:")
+
+		pieces := info.Info.Pieces
+		for i := 0; i < len(pieces); i += 20 {
+			pieceHash := pieces[i : i+20]
+			fmt.Printf("%x\n", pieceHash)
+		}
 	} else {
 		logger.Error("Unknown command", zap.String("command", command))
 		os.Exit(1)

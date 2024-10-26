@@ -11,7 +11,7 @@ func Encode(value any) (string, error) {
 	case string:
 		return fmt.Sprintf("%d:%s", len(v), v), nil
 	case []byte: // for info.pieces
-		return fmt.Sprintf("%d:", len(v)) + string(v), nil
+		return fmt.Sprintf("%d:%s", len(v), string(v)), nil
 	case int:
 		return fmt.Sprintf("i%de", v), nil
 	case []any:

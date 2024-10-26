@@ -61,6 +61,7 @@ func Info(bencodedString string) (*TorrentInfo, error) {
 
 	return torrentInfo, nil
 }
+
 func Decode(bencodedString string) (any, int, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 		return decodeString(bencodedString)
