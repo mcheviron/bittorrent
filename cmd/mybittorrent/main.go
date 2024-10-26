@@ -17,13 +17,13 @@ import (
 )
 
 type TrackerRequest struct {
-	InfoHash   []byte `json:"info_hash"`  // 20-byte SHA1 hash of the info dict
-	PeerID     string `json:"peer_id"`    // 20-byte string to identify the client
-	Port       int    `json:"port"`       // Port the client is listening on (6881)
-	Uploaded   int    `json:"uploaded"`   // Total amount uploaded
-	Downloaded int    `json:"downloaded"` // Total amount downloaded
-	Left       int    `json:"left"`       // Number of bytes left to download
-	Compact    int    `json:"compact"`    // Use compact representation (1)
+	InfoHash   []byte `json:"info_hash"`
+	PeerID     string `json:"peer_id"`
+	Port       int    `json:"port"`
+	Uploaded   int    `json:"uploaded"`
+	Downloaded int    `json:"downloaded"`
+	Left       int    `json:"left"`
+	Compact    int    `json:"compact"`
 }
 type TrackerResponse struct {
 	Interval int    `json:"interval"`
