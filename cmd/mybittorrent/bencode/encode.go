@@ -49,7 +49,7 @@ func Encode(value any) (string, error) {
 		return "", fmt.Errorf("unsupported type for bencode encoding: %T", value)
 	}
 }
-func HashInfo(info *TorrentInfo) (string, error) {
+func HashInfo(info *TorrentInfo) (string, []byte, error) {
 	infoMap := map[string]any{
 		"length":       info.Info.Length,
 		"name":         info.Info.Name,
@@ -59,10 +59,11 @@ func HashInfo(info *TorrentInfo) (string, error) {
 
 	encoded, err := Encode(infoMap)
 	if err != nil {
-		return "", fmt.Errorf("failed to encode info: %v", err)
+		return "", nil, fmt.Errorf("failed to encode info: %v", err)
 	}
 
 	h := sha1.New()
 	h.Write([]byte(encoded))
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
+	infoHash := h.Sum(nil)
+	return fmt.Sprintf("%x", infoHash), infoHash, nil
 }
