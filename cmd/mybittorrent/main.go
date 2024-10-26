@@ -5,26 +5,43 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"unicode"
+
+	"go.uber.org/zap"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
-// Ensures gofmt doesn't remove the "os" encoding/json import (feel free to remove this!)
-var _ = json.Marshal
+func init() {
+	var err error
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	zap.ReplaceGlobals(logger)
+}
 
-// Example:
-// - 5:hello -> hello
-// - 10:hello12345 -> hello12345
-func decodeBencode(bencodedString string) (interface{}, error) {
+// decodeBencode decodes a bencoded string into its corresponding value.
+// The function currently only supports decoding strings encoded in the bencode format.
+//
+// Bencode string format: <length>:<contents>
+// Where:
+//   - length: An integer specifying the length of the contents
+//   - contents: The actual string content
+//
+// Examples:
+//   - Input: "5:hello" -> Output: "hello"
+//   - Input: "10:hello12345" -> Output: "hello12345"
+//
+// Returns:
+//   - any: The decoded value (currently only strings)
+//   - error: An error if the decoding fails or if a non-string type is encountered
+//
+// Note: This implementation is limited to strings only and could be expanded
+// to support other bencode types like integers, lists, and dictionaries.
+func decodeBencode(bencodedString string) (any, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
-		var firstColonIndex int
-
-		for i := 0; i < len(bencodedString); i++ {
-			if bencodedString[i] == ':' {
-				firstColonIndex = i
-				break
-			}
-		}
+		firstColonIndex := strings.Index(bencodedString, ":")
 
 		lengthStr := bencodedString[:firstColonIndex]
 
@@ -38,28 +55,26 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 		return "", fmt.Errorf("Only strings are supported at the moment")
 	}
 }
-
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	logger := zap.L()
+	logger.Info("Logs from your program will appear here!")
 
 	command := os.Args[1]
 
 	if command == "decode" {
-		// Uncomment this block to pass the first stage
-		//
-		// bencodedValue := os.Args[2]
-		//
-		// decoded, err := decodeBencode(bencodedValue)
-		// if err != nil {
-		// 	fmt.Println(err)
-		// 	return
-		// }
-		//
-		// jsonOutput, _ := json.Marshal(decoded)
-		// fmt.Println(string(jsonOutput))
+
+		bencodedValue := os.Args[2]
+
+		decoded, err := decodeBencode(bencodedValue)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		jsonOutput, _ := json.Marshal(decoded)
+		fmt.Println(string(jsonOutput))
 	} else {
-		fmt.Println("Unknown command: " + command)
+		logger.Error("Unknown command", zap.String("command", command))
 		os.Exit(1)
 	}
 }
