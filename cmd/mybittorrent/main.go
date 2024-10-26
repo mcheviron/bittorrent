@@ -21,43 +21,8 @@ func init() {
 	zap.ReplaceGlobals(logger)
 }
 
-// decodeBencode decodes a bencoded string into its corresponding value.
-// The function currently only supports decoding strings encoded in the bencode format.
-//
-// Bencode string format: <length>:<contents>
-// Where:
-//   - length: An integer specifying the length of the contents
-//   - contents: The actual string content
-//
-// Examples:
-//   - Input: "5:hello" -> Output: "hello"
-//   - Input: "10:hello12345" -> Output: "hello12345"
-//
-// Returns:
-//   - any: The decoded value (currently only strings)
-//   - error: An error if the decoding fails or if a non-string type is encountered
-//
-// Note: This implementation is limited to strings only and could be expanded
-// to support other bencode types like integers, lists, and dictionaries.
-func decodeBencode(bencodedString string) (any, error) {
-	if unicode.IsDigit(rune(bencodedString[0])) {
-		firstColonIndex := strings.Index(bencodedString, ":")
-
-		lengthStr := bencodedString[:firstColonIndex]
-
-		length, err := strconv.Atoi(lengthStr)
-		if err != nil {
-			return "", err
-		}
-
-		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
-	} else {
-		return "", fmt.Errorf("Only strings are supported at the moment")
-	}
-}
 func main() {
 	logger := zap.L()
-	logger.Info("Logs from your program will appear here!")
 
 	command := os.Args[1]
 
@@ -77,4 +42,42 @@ func main() {
 		logger.Error("Unknown command", zap.String("command", command))
 		os.Exit(1)
 	}
+}
+
+func decodeBencode(bencodedString string) (any, error) {
+	if unicode.IsDigit(rune(bencodedString[0])) {
+		return decodeBencodeString(bencodedString)
+	} else if bencodedString[0] == 'i' {
+		return decodeBencodeInteger(bencodedString)
+	} else {
+		return "", fmt.Errorf("Only strings and integers are supported at the moment")
+	}
+}
+
+func decodeBencodeInteger(bencodedString string) (int, error) {
+	if !strings.HasPrefix(bencodedString, "i") || !strings.HasSuffix(bencodedString, "e") {
+		return 0, fmt.Errorf("invalid integer format: must start with 'i' and end with 'e'")
+	}
+
+	numStr := bencodedString[1 : len(bencodedString)-1]
+
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer: %v", err)
+	}
+
+	return num, nil
+}
+
+func decodeBencodeString(bencodedString string) (string, error) {
+	firstColonIndex := strings.Index(bencodedString, ":")
+
+	lengthStr := bencodedString[:firstColonIndex]
+
+	length, err := strconv.Atoi(lengthStr)
+	if err != nil {
+		return "", err
+	}
+
+	return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
 }
