@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,32 +9,13 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
+	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/peering"
 	"go.uber.org/zap"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
-
-type TrackerRequest struct {
-	InfoHash   []byte `json:"info_hash"`
-	PeerID     string `json:"peer_id"`
-	Port       int    `json:"port"`
-	Uploaded   int    `json:"uploaded"`
-	Downloaded int    `json:"downloaded"`
-	Left       int    `json:"left"`
-	Compact    int    `json:"compact"`
-}
-type TrackerResponse struct {
-	Interval int    `json:"interval"`
-	Peers    string `json:"peers"`
-}
-
-type Peer struct {
-	IP   net.IP
-	Port uint16
-}
-
-const peerID = "-MY0001-123456789012"
 
 func init() {
 	var err error
@@ -61,6 +41,10 @@ func main() {
 		}
 	case "peers":
 		if err := handlePeers(os.Args); err != nil {
+			os.Exit(1)
+		}
+	case "handshake":
+		if err := handleHandshake(os.Args); err != nil {
 			os.Exit(1)
 		}
 	default:
@@ -148,9 +132,9 @@ func handlePeers(args []string) error {
 		return err
 	}
 
-	trackerReq := &TrackerRequest{
+	trackerReq := &peering.TrackerRequest{
 		InfoHash:   infoHash,
-		PeerID:     peerID,
+		PeerID:     peering.PeerID,
 		Port:       6881,
 		Uploaded:   0,
 		Downloaded: 0,
@@ -193,7 +177,7 @@ func handlePeers(args []string) error {
 		return fmt.Errorf("invalid tracker response format")
 	}
 
-	peers := parsePeers(trackerResp["peers"].(string))
+	peers := peering.ParsePeers(trackerResp["peers"].(string))
 	for _, peer := range peers {
 		fmt.Printf("%s:%d\n", peer.IP, peer.Port)
 	}
@@ -201,16 +185,61 @@ func handlePeers(args []string) error {
 	return nil
 }
 
-func parsePeers(peersData string) []Peer {
-	peers := make([]Peer, 0, len(peersData)/6)
-
-	for i := 0; i < len(peersData); i += 6 {
-		peer := Peer{
-			IP:   net.IP([]byte(peersData[i : i+4])),
-			Port: binary.BigEndian.Uint16([]byte(peersData[i+4 : i+6])),
-		}
-		peers = append(peers, peer)
+func handleHandshake(args []string) error {
+	if len(args) < 3 {
+		return fmt.Errorf("not enough arguments. Usage: handshake <torrent-file> <peer-address>")
 	}
 
-	return peers
+	torrentPath := args[2]
+	peerAddr := args[3]
+
+	torrentData, err := os.ReadFile(torrentPath)
+	if err != nil {
+		return fmt.Errorf("failed to read torrent file: %v", err)
+	}
+
+	info, err := bencode.Info(string(torrentData))
+	if err != nil {
+		return fmt.Errorf("failed to parse torrent file: %v", err)
+	}
+
+	_, infoHash, err := bencode.HashInfo(info)
+	if err != nil {
+		return fmt.Errorf("failed to compute info hash: %v", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", peerAddr, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to connect to peer: %v", err)
+	}
+	defer conn.Close()
+
+	// handshake message
+	handshake := make([]byte, 0, 68)
+	handshake = append(handshake, byte(19))
+	handshake = append(handshake, []byte("BitTorrent protocol")...)
+	handshake = append(handshake, make([]byte, 8)...) // reserved bytes
+	handshake = append(handshake, infoHash...)
+	handshake = append(handshake, []byte(peering.PeerID)...)
+
+	if _, err := conn.Write(handshake); err != nil {
+		return fmt.Errorf("failed to send handshake: %v", err)
+	}
+
+	// recv
+	response := make([]byte, 68)
+	if _, err := io.ReadFull(conn, response); err != nil {
+		return fmt.Errorf("failed to receive handshake: %v", err)
+	}
+
+	// verify
+	if response[0] != 19 || string(response[1:20]) != "BitTorrent protocol" {
+		return fmt.Errorf("invalid handshake response")
+	}
+
+	// extract peer id
+	responsePeerID := response[48:68]
+	fmt.Printf("Peer ID: %x\n", responsePeerID)
+
+	return nil
 }

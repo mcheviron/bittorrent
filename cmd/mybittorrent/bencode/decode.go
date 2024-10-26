@@ -72,7 +72,7 @@ func Decode(bencodedString string) (any, int, error) {
 	} else if bencodedString[0] == 'd' {
 		return decodeDictionary(bencodedString)
 	} else {
-		return "", 0, fmt.Errorf("Only strings, integers, lists and dictionaries are supported at the moment")
+		return "", 0, fmt.Errorf("Only strings, integers, lists and dictionaries are supported at the moment. Got: %s", bencodedString)
 	}
 }
 func decodeDictionary(bencodedString string) (map[string]any, int, error) {
