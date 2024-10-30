@@ -3,10 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -142,7 +139,7 @@ func handlePeers(args []string) error {
 		return err
 	}
 
-	peers, err := getPeers(info)
+	peers, err := peering.GetPeers(info)
 	if err != nil {
 		logger.Error("Failed to get peers", zap.Error(err))
 		return err
@@ -225,58 +222,6 @@ func handleDownload(args []string) error {
 	}
 
 	return os.WriteFile(outputPath, fileData, 0644)
-}
-
-func getPeers(info *bencode.TorrentInfo) ([]peering.Peer, error) {
-	_, infoHash, err := bencode.HashInfo(info)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get info hash: %v", err)
-	}
-
-	trackerReq := &peering.TrackerRequest{
-		InfoHash:   infoHash,
-		PeerID:     peering.PeerID,
-		Port:       6881,
-		Uploaded:   0,
-		Downloaded: 0,
-		Left:       info.Info.Length,
-		Compact:    1,
-	}
-
-	trackerURL := fmt.Sprintf("%s?%s",
-		info.Announce,
-		url.Values{
-			"info_hash":  []string{string(trackerReq.InfoHash)},
-			"peer_id":    []string{trackerReq.PeerID},
-			"port":       []string{strconv.Itoa(trackerReq.Port)},
-			"uploaded":   []string{strconv.Itoa(trackerReq.Uploaded)},
-			"downloaded": []string{strconv.Itoa(trackerReq.Downloaded)},
-			"left":       []string{strconv.Itoa(trackerReq.Left)},
-			"compact":    []string{strconv.Itoa(trackerReq.Compact)},
-		}.Encode())
-
-	resp, err := http.Get(trackerURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tracker response: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	decoded, _, err := bencode.Decode[map[string]any](string(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode tracker response: %v", err)
-	}
-
-	peers := peering.ParsePeers(decoded["peers"].(string))
-	if len(peers) == 0 {
-		return nil, fmt.Errorf("no peers available")
-	}
-
-	return peers, nil
 }
 
 func handleHandshake(args []string) error {
