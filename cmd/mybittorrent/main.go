@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
@@ -49,22 +50,32 @@ func main() {
 	switch command {
 	case "decode":
 		if err := handleDecode(os.Args); err != nil {
+			logger.Error("Failed to decode", zap.Error(err))
 			os.Exit(1)
 		}
 	case "info":
 		if err := handleInfo(os.Args); err != nil {
+			logger.Error("Failed to get info", zap.Error(err))
 			os.Exit(1)
 		}
 	case "peers":
 		if err := handlePeers(os.Args); err != nil {
+			logger.Error("Failed to get peers", zap.Error(err))
 			os.Exit(1)
 		}
 	case "handshake":
 		if err := handleHandshake(os.Args); err != nil {
+			logger.Error("Failed to handshake", zap.Error(err))
 			os.Exit(1)
 		}
 	case "download_piece":
 		if err := handleDownloadPiece(os.Args); err != nil {
+			logger.Error("Failed to download piece", zap.Error(err))
+			os.Exit(1)
+		}
+	case "download":
+		if err := handleDownload(os.Args); err != nil {
+			logger.Error("Failed to download", zap.Error(err))
 			os.Exit(1)
 		}
 	default:
@@ -223,7 +234,13 @@ func handleDownloadPiece(args []string) error {
 			continue
 		}
 
-		if err := exchangeMessages(conn, pieceIndex, outputPath, info); err != nil {
+		file, err := os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("failed to create output file: %v", err)
+		}
+		defer file.Close()
+
+		if err := exchangeMessages(conn, pieceIndex, file, info, true); err != nil {
 			lastErr = err
 			continue
 		}
@@ -232,6 +249,142 @@ func handleDownloadPiece(args []string) error {
 	}
 
 	return fmt.Errorf("failed to download piece from any peer: %v", lastErr)
+}
+
+func handleDownload(args []string) error {
+	if len(args) != 5 {
+		return fmt.Errorf("usage: download -o <output-path> <torrent-file>")
+	}
+	if args[2] != "-o" {
+		return fmt.Errorf("expected -o flag, got: %s", args[2])
+	}
+	outputPath := args[3]
+	torrentPath := args[4]
+
+	torrentData, err := os.ReadFile(torrentPath)
+	if err != nil {
+		return fmt.Errorf("failed to read torrent file: %v", err)
+	}
+
+	info, err := bencode.Info(string(torrentData))
+	if err != nil {
+		return fmt.Errorf("failed to parse torrent file: %v", err)
+	}
+
+	peers, err := getPeers(info)
+	if err != nil {
+		return fmt.Errorf("failed to get peers: %v", err)
+	}
+	if len(peers) == 0 {
+		return fmt.Errorf("no peers available")
+	}
+
+	totalPieces := len(info.Info.Pieces) / 20
+	results := make(chan struct {
+		index int
+		data  []byte
+		err   error
+	}, totalPieces)
+
+	type pieceWork struct {
+		index int
+		peer  peering.Peer
+	}
+	workChan := make(chan pieceWork, totalPieces)
+
+	for i := range totalPieces {
+		peerIndex := i % len(peers)
+		workChan <- pieceWork{index: i, peer: peers[peerIndex]}
+	}
+	close(workChan)
+
+	var workers sync.WaitGroup
+	for range len(peers) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+
+			for work := range workChan {
+				peerAddr := fmt.Sprintf("%s:%d", work.peer.IP, work.peer.Port)
+				conn, err := net.DialTimeout("tcp", peerAddr, 3*time.Second)
+				if err != nil {
+					results <- struct {
+						index int
+						data  []byte
+						err   error
+					}{work.index, nil, fmt.Errorf("failed to connect to peer: %v", err)}
+					continue
+				}
+
+				_, infoHash, err := bencode.HashInfo(info)
+				if err != nil {
+					conn.Close()
+					results <- struct {
+						index int
+						data  []byte
+						err   error
+					}{work.index, nil, fmt.Errorf("failed to calculate info hash: %v", err)}
+					continue
+				}
+
+				if _, err := performHandshake(conn, infoHash); err != nil {
+					conn.Close()
+					results <- struct {
+						index int
+						data  []byte
+						err   error
+					}{work.index, nil, fmt.Errorf("handshake failed: %v", err)}
+					continue
+				}
+
+				var buffer bytes.Buffer
+				err = exchangeMessages(conn, work.index, &buffer, info, true)
+				conn.Close()
+
+				results <- struct {
+					index int
+					data  []byte
+					err   error
+				}{work.index, buffer.Bytes(), err}
+			}
+		}()
+	}
+
+	totalLength := info.Info.Length
+	fileData := make([]byte, totalLength)
+
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+
+	completedPieces := 0
+	for result := range results {
+		if result.err != nil {
+			return fmt.Errorf("failed to download piece %d: %v", result.index, result.err)
+		}
+		copy(fileData[result.index*info.Info.PieceLength:], result.data)
+		completedPieces++
+	}
+
+	for pieceIndex := range totalPieces {
+		pieceHash := info.Info.Pieces[pieceIndex*20 : (pieceIndex+1)*20]
+		start := pieceIndex * info.Info.PieceLength
+		end := start + info.Info.PieceLength
+		if end > totalLength {
+			end = totalLength
+		}
+		actualHash := sha1.Sum(fileData[start:end])
+		if !bytes.Equal(actualHash[:], pieceHash) {
+			return fmt.Errorf("hash mismatch for piece %d", pieceIndex)
+		}
+	}
+
+	if err := os.WriteFile(outputPath, fileData, 0644); err != nil {
+		return fmt.Errorf("failed to write output file: %v", err)
+	}
+
+	return nil
 }
 
 func getPeers(info *bencode.TorrentInfo) ([]peering.Peer, error) {
@@ -349,28 +502,30 @@ func handleHandshake(args []string) error {
 	return nil
 }
 
-func exchangeMessages(conn net.Conn, pieceIndex int, outputPath string, info *bencode.TorrentInfo) error {
+func exchangeMessages(conn net.Conn, pieceIndex int, output io.Writer, info *bencode.TorrentInfo, handleInitialMessages bool) error {
 	actualLength := getPieceLength(pieceIndex, info)
 	blocks := dividePiece(actualLength, 16384)
 
-	msg, err := readMessage(conn)
-	if err != nil {
-		return fmt.Errorf("failed to read bitfield: %v", err)
-	}
-	if msg.ID != 5 {
-		return fmt.Errorf("expected bitfield message, got %d", msg.ID)
-	}
+	if handleInitialMessages {
+		msg, err := readMessage(conn)
+		if err != nil {
+			return fmt.Errorf("failed to read bitfield: %v", err)
+		}
+		if msg.ID != 5 {
+			return fmt.Errorf("expected bitfield message, got %d", msg.ID)
+		}
 
-	if err := sendMessage(conn, 2, nil); err != nil {
-		return fmt.Errorf("failed to send interested message: %v", err)
-	}
+		if err := sendMessage(conn, 2, nil); err != nil {
+			return fmt.Errorf("failed to send interested message: %v", err)
+		}
 
-	msg, err = readMessage(conn)
-	if err != nil {
-		return fmt.Errorf("failed to read unchoke message: %v", err)
-	}
-	if msg.ID != 1 {
-		return fmt.Errorf("expected unchoke message, got %d", msg.ID)
+		msg, err = readMessage(conn)
+		if err != nil {
+			return fmt.Errorf("failed to read unchoke message: %v", err)
+		}
+		if msg.ID != 1 {
+			return fmt.Errorf("expected unchoke message, got %d", msg.ID)
+		}
 	}
 
 	pieceData := make([]byte, actualLength)
@@ -381,7 +536,7 @@ func exchangeMessages(conn net.Conn, pieceIndex int, outputPath string, info *be
 			return fmt.Errorf("failed to send request message: %v", err)
 		}
 
-		msg, err = readMessage(conn)
+		msg, err := readMessage(conn)
 		if err != nil {
 			return fmt.Errorf("failed to read piece message: %v", err)
 		}
@@ -410,8 +565,8 @@ func exchangeMessages(conn net.Conn, pieceIndex int, outputPath string, info *be
 		return fmt.Errorf("piece hash mismatch")
 	}
 
-	if err := os.WriteFile(outputPath, pieceData, 0644); err != nil {
-		return fmt.Errorf("failed to save piece: %v", err)
+	if _, err := output.Write(pieceData); err != nil {
+		return fmt.Errorf("failed to write piece data: %v", err)
 	}
 
 	return nil
