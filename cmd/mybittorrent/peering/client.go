@@ -134,7 +134,7 @@ func (c *Client) downloadPieceFromPeer(peer Peer, pieceIndex int) ([]byte, error
 	}
 	defer conn.Close()
 
-	if _, err := performHandshake(conn, c.infoHash); err != nil {
+	if _, err := PerformHandshake(conn, c.infoHash); err != nil {
 		return nil, err
 	}
 

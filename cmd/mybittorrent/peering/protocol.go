@@ -8,7 +8,9 @@ import (
 	"net"
 )
 
-func performHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
+// PerformHandshake performs the BitTorrent handshake with a peer
+// Changed from performHandshake to PerformHandshake to make it public
+func PerformHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
 	handshake := make([]byte, 68)
 	handshake[0] = 19
 	copy(handshake[1:], []byte("BitTorrent protocol"))

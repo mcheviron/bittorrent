@@ -1,6 +1,10 @@
 package peering
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+
+	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
+)
 
 func dividePiece(pieceLength int, blockSize int) []Block {
 	var blocks []Block
@@ -22,4 +26,13 @@ func encodeRequest(index, begin, length int) []byte {
 	return payload
 }
 
-// Other utility functions...
+func getPieceLength(pieceIndex int, info *bencode.TorrentInfo) int {
+	totalLength := info.Info.Length
+	pieceLength := info.Info.PieceLength
+	numPieces := (totalLength + pieceLength - 1) / pieceLength
+
+	if pieceIndex == numPieces-1 {
+		return totalLength - pieceLength*(numPieces-1)
+	}
+	return pieceLength
+}

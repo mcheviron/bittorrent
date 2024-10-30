@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"crypto/sha1"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,17 +17,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-type message struct {
-	Length  uint32
-	ID      byte
-	Payload []byte
-}
-
-type block struct {
-	Begin  int
-	Length int
-}
-
 func init() {
 	var err error
 	config := zap.NewDevelopmentConfig()
@@ -41,9 +27,9 @@ func init() {
 	}
 	zap.ReplaceGlobals(logger)
 }
+
 func main() {
 	logger := zap.L()
-
 	command := os.Args[1]
 
 	switch command {
@@ -83,15 +69,14 @@ func main() {
 	}
 }
 
+// Command handlers
+
 func handleDecode(args []string) error {
 	bencodedValue := args[2]
-
 	decoded, _, err := bencode.Decode[any](bencodedValue)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
-
 	jsonOutput, _ := json.Marshal(decoded)
 	fmt.Println(string(jsonOutput))
 	return nil
@@ -294,29 +279,6 @@ func getPeers(info *bencode.TorrentInfo) ([]peering.Peer, error) {
 	return peers, nil
 }
 
-func performHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
-	handshake := make([]byte, 68)
-	handshake[0] = 19
-	copy(handshake[1:], []byte("BitTorrent protocol"))
-	copy(handshake[28:], infoHash)
-	copy(handshake[48:], []byte(peering.PeerID))
-
-	if _, err := conn.Write(handshake); err != nil {
-		return nil, err
-	}
-
-	response := make([]byte, 68)
-	if _, err := io.ReadFull(conn, response); err != nil {
-		return nil, fmt.Errorf("failed to receive handshake: %v", err)
-	}
-
-	if string(response[1:20]) != "BitTorrent protocol" {
-		return nil, fmt.Errorf("invalid handshake response")
-	}
-
-	return response, nil
-}
-
 func handleHandshake(args []string) error {
 	if len(args) < 4 {
 		return fmt.Errorf("not enough arguments. Usage: handshake <torrent-file> <peer-address>")
@@ -346,7 +308,7 @@ func handleHandshake(args []string) error {
 		return fmt.Errorf("failed to calculate info hash: %w", err)
 	}
 
-	response, err := performHandshake(conn, infoHash)
+	response, err := peering.PerformHandshake(conn, infoHash)
 	if err != nil {
 		return err
 	}
@@ -355,159 +317,4 @@ func handleHandshake(args []string) error {
 	fmt.Printf("Peer ID: %x\n", responsePeerID)
 
 	return nil
-}
-
-func exchangeMessages(conn net.Conn, pieceIndex int, output io.Writer, info *bencode.TorrentInfo, handleInitialMessages bool) error {
-	actualLength := getPieceLength(pieceIndex, info)
-	blocks := dividePiece(actualLength, 16384)
-
-	if handleInitialMessages {
-		msg, err := readMessage(conn)
-		if err != nil {
-			return fmt.Errorf("failed to read bitfield: %v", err)
-		}
-		if msg.ID != 5 {
-			return fmt.Errorf("expected bitfield message, got %d", msg.ID)
-		}
-
-		if err := sendMessage(conn, 2, nil); err != nil {
-			return fmt.Errorf("failed to send interested message: %v", err)
-		}
-
-		msg, err = readMessage(conn)
-		if err != nil {
-			return fmt.Errorf("failed to read unchoke message: %v", err)
-		}
-		if msg.ID != 1 {
-			return fmt.Errorf("expected unchoke message, got %d", msg.ID)
-		}
-	}
-
-	pieceData := make([]byte, actualLength)
-
-	for _, blk := range blocks {
-		err := sendMessage(conn, 6, encodeRequest(pieceIndex, blk.Begin, blk.Length))
-		if err != nil {
-			return fmt.Errorf("failed to send request message: %v", err)
-		}
-
-		msg, err := readMessage(conn)
-		if err != nil {
-			return fmt.Errorf("failed to read piece message: %v", err)
-		}
-		if msg.ID != 7 {
-			return fmt.Errorf("expected piece message, got %d", msg.ID)
-		}
-
-		if len(msg.Payload) < 8 {
-			return fmt.Errorf("invalid piece message payload size")
-		}
-		receivedIndex := int(binary.BigEndian.Uint32(msg.Payload[0:4]))
-		begin := int(binary.BigEndian.Uint32(msg.Payload[4:8]))
-		block := msg.Payload[8:]
-
-		if receivedIndex != pieceIndex {
-			return fmt.Errorf("received piece index %d does not match requested index %d",
-				receivedIndex, pieceIndex)
-		}
-
-		copy(pieceData[begin:], block)
-	}
-
-	expectedHash := info.Info.Pieces[pieceIndex*20 : (pieceIndex+1)*20]
-	actualHash := sha1.Sum(pieceData)
-	if !bytes.Equal(actualHash[:], expectedHash) {
-		return fmt.Errorf("piece hash mismatch")
-	}
-
-	if _, err := output.Write(pieceData); err != nil {
-		return fmt.Errorf("failed to write piece data: %v", err)
-	}
-
-	return nil
-}
-
-func readMessage(conn net.Conn) (*message, error) {
-	var length uint32
-	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
-		return nil, fmt.Errorf("failed to read message length: %v", err)
-	}
-
-	if length == 0 {
-		return &message{Length: length}, nil
-	}
-
-	msg := &message{Length: length}
-
-	id := make([]byte, 1)
-	if _, err := io.ReadFull(conn, id); err != nil {
-		return nil, fmt.Errorf("failed to read message ID: %v", err)
-	}
-	msg.ID = id[0]
-
-	payloadLen := int(length - 1)
-	if payloadLen > 0 {
-		msg.Payload = make([]byte, payloadLen)
-		if _, err := io.ReadFull(conn, msg.Payload); err != nil {
-			return nil, fmt.Errorf("failed to read message payload: %v", err)
-		}
-	}
-
-	return msg, nil
-}
-
-func sendMessage(conn net.Conn, id byte, payload []byte) error {
-	var buf bytes.Buffer
-
-	length := uint32(1 + len(payload))
-	if err := binary.Write(&buf, binary.BigEndian, length); err != nil {
-		return fmt.Errorf("failed to write message length: %v", err)
-	}
-
-	if err := buf.WriteByte(id); err != nil {
-		return fmt.Errorf("failed to write message ID: %v", err)
-	}
-
-	if len(payload) > 0 {
-		if _, err := buf.Write(payload); err != nil {
-			return fmt.Errorf("failed to write message payload: %v", err)
-		}
-	}
-
-	if _, err := conn.Write(buf.Bytes()); err != nil {
-		return fmt.Errorf("failed to send message: %v", err)
-	}
-
-	return nil
-}
-
-func dividePiece(pieceLength int, blockSize int) []block {
-	var blocks []block
-	for begin := 0; begin < pieceLength; begin += blockSize {
-		end := begin + blockSize
-		if end > pieceLength {
-			end = pieceLength
-		}
-		blocks = append(blocks, block{Begin: begin, Length: end - begin})
-	}
-	return blocks
-}
-
-func encodeRequest(index, begin, length int) []byte {
-	payload := make([]byte, 12)
-	binary.BigEndian.PutUint32(payload[0:4], uint32(index))
-	binary.BigEndian.PutUint32(payload[4:8], uint32(begin))
-	binary.BigEndian.PutUint32(payload[8:12], uint32(length))
-	return payload
-}
-
-func getPieceLength(pieceIndex int, info *bencode.TorrentInfo) int {
-	totalLength := info.Info.Length
-	pieceLength := info.Info.PieceLength
-	numPieces := (totalLength + pieceLength - 1) / pieceLength
-
-	if pieceIndex == numPieces-1 {
-		return totalLength - pieceLength*(numPieces-1)
-	}
-	return pieceLength
 }
