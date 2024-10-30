@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
@@ -197,58 +196,17 @@ func handleDownloadPiece(args []string) error {
 		return fmt.Errorf("failed to parse torrent file: %v", err)
 	}
 
-	peers, err := getPeers(info)
+	client, err := peering.NewClient(info)
 	if err != nil {
-		return fmt.Errorf("failed to get peers: %v", err)
+		return err
 	}
 
-	var lastErr error
-	for _, peer := range peers {
-		peerAddr := fmt.Sprintf("%s:%d", peer.IP, peer.Port)
-
-		conn, err := net.DialTimeout("tcp", peerAddr, 1*time.Second)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		defer conn.Close()
-
-		if err := conn.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
-			lastErr = err
-			continue
-		}
-
-		_, infoHash, err := bencode.HashInfo(info)
-		if err != nil {
-			return err
-		}
-
-		_, err = performHandshake(conn, infoHash)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if err := conn.SetDeadline(time.Time{}); err != nil {
-			lastErr = err
-			continue
-		}
-
-		file, err := os.Create(outputPath)
-		if err != nil {
-			return fmt.Errorf("failed to create output file: %v", err)
-		}
-		defer file.Close()
-
-		if err := exchangeMessages(conn, pieceIndex, file, info, true); err != nil {
-			lastErr = err
-			continue
-		}
-
-		return nil
+	pieceData, err := client.DownloadPiece(pieceIndex)
+	if err != nil {
+		return err
 	}
 
-	return fmt.Errorf("failed to download piece from any peer: %v", lastErr)
+	return os.WriteFile(outputPath, pieceData, 0644)
 }
 
 func handleDownload(args []string) error {
@@ -271,120 +229,17 @@ func handleDownload(args []string) error {
 		return fmt.Errorf("failed to parse torrent file: %v", err)
 	}
 
-	peers, err := getPeers(info)
+	client, err := peering.NewClient(info)
 	if err != nil {
-		return fmt.Errorf("failed to get peers: %v", err)
-	}
-	if len(peers) == 0 {
-		return fmt.Errorf("no peers available")
+		return err
 	}
 
-	totalPieces := len(info.Info.Pieces) / 20
-	results := make(chan struct {
-		index int
-		data  []byte
-		err   error
-	}, totalPieces)
-
-	type pieceWork struct {
-		index int
-		peer  peering.Peer
-	}
-	workChan := make(chan pieceWork, totalPieces)
-
-	for i := range totalPieces {
-		peerIndex := i % len(peers)
-		workChan <- pieceWork{index: i, peer: peers[peerIndex]}
-	}
-	close(workChan)
-
-	var workers sync.WaitGroup
-	for range len(peers) {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-
-			for work := range workChan {
-				peerAddr := fmt.Sprintf("%s:%d", work.peer.IP, work.peer.Port)
-				conn, err := net.DialTimeout("tcp", peerAddr, 3*time.Second)
-				if err != nil {
-					results <- struct {
-						index int
-						data  []byte
-						err   error
-					}{work.index, nil, fmt.Errorf("failed to connect to peer: %v", err)}
-					continue
-				}
-
-				_, infoHash, err := bencode.HashInfo(info)
-				if err != nil {
-					conn.Close()
-					results <- struct {
-						index int
-						data  []byte
-						err   error
-					}{work.index, nil, fmt.Errorf("failed to calculate info hash: %v", err)}
-					continue
-				}
-
-				if _, err := performHandshake(conn, infoHash); err != nil {
-					conn.Close()
-					results <- struct {
-						index int
-						data  []byte
-						err   error
-					}{work.index, nil, fmt.Errorf("handshake failed: %v", err)}
-					continue
-				}
-
-				var buffer bytes.Buffer
-				err = exchangeMessages(conn, work.index, &buffer, info, true)
-				conn.Close()
-
-				results <- struct {
-					index int
-					data  []byte
-					err   error
-				}{work.index, buffer.Bytes(), err}
-			}
-		}()
+	fileData, err := client.DownloadAll()
+	if err != nil {
+		return err
 	}
 
-	totalLength := info.Info.Length
-	fileData := make([]byte, totalLength)
-
-	go func() {
-		workers.Wait()
-		close(results)
-	}()
-
-	completedPieces := 0
-	for result := range results {
-		if result.err != nil {
-			return fmt.Errorf("failed to download piece %d: %v", result.index, result.err)
-		}
-		copy(fileData[result.index*info.Info.PieceLength:], result.data)
-		completedPieces++
-	}
-
-	for pieceIndex := range totalPieces {
-		pieceHash := info.Info.Pieces[pieceIndex*20 : (pieceIndex+1)*20]
-		start := pieceIndex * info.Info.PieceLength
-		end := start + info.Info.PieceLength
-		if end > totalLength {
-			end = totalLength
-		}
-		actualHash := sha1.Sum(fileData[start:end])
-		if !bytes.Equal(actualHash[:], pieceHash) {
-			return fmt.Errorf("hash mismatch for piece %d", pieceIndex)
-		}
-	}
-
-	if err := os.WriteFile(outputPath, fileData, 0644); err != nil {
-		return fmt.Errorf("failed to write output file: %v", err)
-	}
-
-	return nil
+	return os.WriteFile(outputPath, fileData, 0644)
 }
 
 func getPeers(info *bencode.TorrentInfo) ([]peering.Peer, error) {

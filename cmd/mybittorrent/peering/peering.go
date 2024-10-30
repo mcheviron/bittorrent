@@ -5,27 +5,7 @@ import (
 	"net"
 )
 
-type TrackerRequest struct {
-	InfoHash   []byte `json:"info_hash"`
-	PeerID     string `json:"peer_id"`
-	Port       int    `json:"port"`
-	Uploaded   int    `json:"uploaded"`
-	Downloaded int    `json:"downloaded"`
-	Left       int    `json:"left"`
-	Compact    int    `json:"compact"`
-}
-type TrackerResponse struct {
-	Interval int    `json:"interval"`
-	Peers    string `json:"peers"`
-}
-
-type Peer struct {
-	IP   net.IP
-	Port uint16
-}
-
-const PeerID = "-MY0001-123456789012"
-
+// ParsePeers converts a compact peer string into a slice of Peer structs
 func ParsePeers(peersData string) []Peer {
 	peers := make([]Peer, 0, len(peersData)/6)
 

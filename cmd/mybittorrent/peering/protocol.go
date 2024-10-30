@@ -1,0 +1,89 @@
+package peering
+
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"net"
+)
+
+func performHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
+	handshake := make([]byte, 68)
+	handshake[0] = 19
+	copy(handshake[1:], []byte("BitTorrent protocol"))
+	copy(handshake[28:], infoHash)
+	copy(handshake[48:], []byte(PeerID))
+
+	if _, err := conn.Write(handshake); err != nil {
+		return nil, err
+	}
+
+	response := make([]byte, 68)
+	if _, err := io.ReadFull(conn, response); err != nil {
+		return nil, fmt.Errorf("failed to receive handshake: %v", err)
+	}
+
+	if string(response[1:20]) != "BitTorrent protocol" {
+		return nil, fmt.Errorf("invalid handshake response")
+	}
+
+	return response, nil
+}
+
+func readMessage(conn net.Conn) (*Message, error) {
+	var length uint32
+	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+		return nil, fmt.Errorf("failed to read message length: %v", err)
+	}
+
+	if length == 0 {
+		return &Message{Length: length}, nil
+	}
+
+	msg := &Message{Length: length}
+
+	id := make([]byte, 1)
+	if _, err := io.ReadFull(conn, id); err != nil {
+		return nil, fmt.Errorf("failed to read message ID: %v", err)
+	}
+	msg.ID = id[0]
+
+	payloadLen := int(length - 1)
+	if payloadLen > 0 {
+		msg.Payload = make([]byte, payloadLen)
+		if _, err := io.ReadFull(conn, msg.Payload); err != nil {
+			return nil, fmt.Errorf("failed to read message payload: %v", err)
+		}
+	}
+
+	return msg, nil
+}
+
+func sendMessage(conn net.Conn, id byte, payload []byte) error {
+	var buf bytes.Buffer
+
+	length := uint32(1 + len(payload))
+	if err := binary.Write(&buf, binary.BigEndian, length); err != nil {
+		return fmt.Errorf("failed to write message length: %v", err)
+	}
+
+	if err := buf.WriteByte(id); err != nil {
+		return fmt.Errorf("failed to write message ID: %v", err)
+	}
+
+	if len(payload) > 0 {
+		if _, err := buf.Write(payload); err != nil {
+			return fmt.Errorf("failed to write message payload: %v", err)
+		}
+	}
+
+	if _, err := conn.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("failed to send message: %v", err)
+	}
+
+	return nil
+}
+
+// Move other protocol-related functions from main.go:
+// readMessage, sendMessage, exchangeMessages, etc.
