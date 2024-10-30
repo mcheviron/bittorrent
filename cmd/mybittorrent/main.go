@@ -161,23 +161,11 @@ func handlePeers(args []string) error {
 }
 
 func handleDownloadPiece(args []string) error {
-	logger := zap.L().Named("download_piece")
-	logger.Info("Starting piece download",
-		zap.Strings("args", args),
-		zap.String("command", "download_piece"))
-
 	if len(args) != 6 {
-		logger.Error("Invalid number of arguments",
-			zap.Int("expected", 6),
-			zap.Int("got", len(args)),
-			zap.Strings("provided_args", args))
 		return fmt.Errorf("usage: download_piece -o <output-path> <torrent-file> <piece-index>")
 	}
 
 	if args[2] != "-o" {
-		logger.Error("Missing -o flag",
-			zap.String("got", args[2]),
-			zap.Strings("all_args", args))
 		return fmt.Errorf("expected -o flag, got: %s", args[2])
 	}
 	outputPath := args[3]
@@ -185,138 +173,64 @@ func handleDownloadPiece(args []string) error {
 
 	pieceIndex, err := strconv.Atoi(args[5])
 	if err != nil {
-		logger.Error("Invalid piece index",
-			zap.String("value", args[5]),
-			zap.String("torrent_path", torrentPath),
-			zap.String("output_path", outputPath),
-			zap.Error(err))
 		return fmt.Errorf("invalid piece index: %v", err)
 	}
 
-	logger.Info("Reading torrent file",
-		zap.String("path", torrentPath),
-		zap.String("output", outputPath),
-		zap.Int("piece_index", pieceIndex))
 	torrentData, err := os.ReadFile(torrentPath)
 	if err != nil {
-		logger.Error("Failed to read torrent file",
-			zap.String("path", torrentPath),
-			zap.Error(err),
-			zap.Int("data_size", len(torrentData)))
 		return fmt.Errorf("failed to read torrent file: %v", err)
 	}
 
-	logger.Debug("Parsing torrent info",
-		zap.String("torrent_path", torrentPath),
-		zap.Int("data_size", len(torrentData)))
 	info, err := bencode.Info(string(torrentData))
 	if err != nil {
-		logger.Error("Failed to parse torrent file",
-			zap.Error(err),
-			zap.String("torrent_path", torrentPath),
-			zap.Int("data_size", len(torrentData)))
 		return fmt.Errorf("failed to parse torrent file: %v", err)
 	}
-	logger.Info("Torrent info parsed",
-		zap.String("announce", info.Announce),
-		zap.Int("piece_length", info.Info.PieceLength),
-		zap.Int("length", info.Info.Length),
-		zap.Int("num_pieces", len(info.Info.Pieces)/20))
 
 	peers, err := getPeers(info)
 	if err != nil {
-		logger.Error("Failed to get peers", zap.Error(err))
 		return fmt.Errorf("failed to get peers: %v", err)
 	}
 
 	var lastErr error
 	for _, peer := range peers {
 		peerAddr := fmt.Sprintf("%s:%d", peer.IP, peer.Port)
-		logger.Info("Attempting to connect to peer",
-			zap.String("peer_addr", peerAddr))
 
-		logger.Debug("Setting initial connection timeout",
-			zap.String("peer_addr", peerAddr),
-			zap.Duration("timeout", 1*time.Second))
 		conn, err := net.DialTimeout("tcp", peerAddr, 1*time.Second)
 		if err != nil {
-			logger.Warn("Failed to connect to peer",
-				zap.String("peer_addr", peerAddr),
-				zap.Error(err))
 			lastErr = err
 			continue
 		}
 		defer conn.Close()
 
-		logger.Debug("Setting handshake deadline",
-			zap.String("peer_addr", peerAddr),
-			zap.Time("deadline", time.Now().Add(1*time.Second)))
 		if err := conn.SetDeadline(time.Now().Add(1 * time.Second)); err != nil {
-			logger.Warn("Failed to set deadline",
-				zap.String("peer_addr", peerAddr),
-				zap.Error(err))
 			lastErr = err
 			continue
 		}
 
 		_, infoHash, err := bencode.HashInfo(info)
 		if err != nil {
-			logger.Error("Failed to calculate info hash", zap.Error(err))
 			return err
 		}
 
-		logger.Debug("Initiating handshake with peer",
-			zap.String("peer_addr", peerAddr))
-		response, err := performHandshake(conn, infoHash)
+		_, err = performHandshake(conn, infoHash)
 		if err != nil {
-			logger.Warn("Handshake failed",
-				zap.String("peer_addr", peerAddr),
-				zap.Error(err))
 			lastErr = err
 			continue
 		}
-		logger.Debug("Handshake successful",
-			zap.String("peer_addr", peerAddr),
-			zap.Binary("peer_response", response))
 
-		logger.Debug("Resetting connection deadlines",
-			zap.String("peer_addr", peerAddr))
 		if err := conn.SetDeadline(time.Time{}); err != nil {
-			logger.Warn("Failed to reset deadlines",
-				zap.String("peer_addr", peerAddr),
-				zap.Error(err))
 			lastErr = err
 			continue
 		}
 
-		logger.Info("Starting piece download",
-			zap.Int("index", pieceIndex),
-			zap.Int("length", info.Info.PieceLength),
-			zap.String("output", outputPath),
-			zap.String("peer_addr", peerAddr))
-
-		logger.Debug("Initiating message exchange for piece download",
-			zap.String("peer_addr", peerAddr),
-			zap.Int("piece_index", pieceIndex))
 		if err := exchangeMessages(conn, pieceIndex, outputPath, info); err != nil {
-			logger.Warn("Failed to download piece from peer",
-				zap.String("peer_addr", peerAddr),
-				zap.Error(err))
 			lastErr = err
 			continue
 		}
 
-		logger.Info("Piece download completed successfully",
-			zap.Int("index", pieceIndex),
-			zap.String("output", outputPath),
-			zap.Int("piece_length", info.Info.PieceLength),
-			zap.String("peer_addr", peerAddr))
 		return nil
 	}
 
-	logger.Error("Failed to download piece from any peer",
-		zap.Int("num_peers", len(peers)),
-		zap.Error(lastErr))
 	return fmt.Errorf("failed to download piece from any peer: %v", lastErr)
 }
 
@@ -373,8 +287,6 @@ func getPeers(info *bencode.TorrentInfo) ([]peering.Peer, error) {
 }
 
 func performHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
-	logger := zap.L().Named("perform_handshake").With(zap.String("peer_addr", conn.RemoteAddr().String()))
-
 	handshake := make([]byte, 68)
 	handshake[0] = 19
 	copy(handshake[1:], []byte("BitTorrent protocol"))
@@ -382,20 +294,15 @@ func performHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
 	copy(handshake[48:], []byte(peering.PeerID))
 
 	if _, err := conn.Write(handshake); err != nil {
-		logger.Error("Failed to send handshake", zap.Error(err))
 		return nil, err
 	}
 
 	response := make([]byte, 68)
 	if _, err := io.ReadFull(conn, response); err != nil {
-		logger.Error("Failed to receive handshake response", zap.Error(err))
 		return nil, fmt.Errorf("failed to receive handshake: %v", err)
 	}
 
 	if string(response[1:20]) != "BitTorrent protocol" {
-		logger.Error("Invalid handshake response",
-			zap.String("expected_protocol", "BitTorrent protocol"),
-			zap.String("received_protocol", string(response[1:20])))
 		return nil, fmt.Errorf("invalid handshake response")
 	}
 
