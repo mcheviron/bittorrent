@@ -21,7 +21,7 @@ type InnerInfo struct {
 }
 
 func Info(bencodedString string) (*TorrentInfo, error) {
-	decoded, _, err := Decode(bencodedString)
+	decoded, _, err := Decode[any](bencodedString)
 	if err != nil {
 		return nil, err
 	}
@@ -62,19 +62,41 @@ func Info(bencodedString string) (*TorrentInfo, error) {
 	return torrentInfo, nil
 }
 
-func Decode(bencodedString string) (any, int, error) {
+func Decode[T any](bencodedString string) (T, int, error) {
+	var result T
 	if unicode.IsDigit(rune(bencodedString[0])) {
-		return decodeString(bencodedString)
+		str, length, err := decodeString(bencodedString)
+		if err != nil {
+			return result, 0, err
+		}
+		result = any(str).(T)
+		return result, length, nil
 	} else if bencodedString[0] == 'i' {
-		return decodeInteger(bencodedString)
+		intVal, length, err := decodeInteger(bencodedString)
+		if err != nil {
+			return result, 0, err
+		}
+		result = any(intVal).(T)
+		return result, length, nil
 	} else if bencodedString[0] == 'l' {
-		return decodeList(bencodedString)
+		list, length, err := decodeList(bencodedString)
+		if err != nil {
+			return result, 0, err
+		}
+		result = any(list).(T)
+		return result, length, nil
 	} else if bencodedString[0] == 'd' {
-		return decodeDictionary(bencodedString)
+		dict, length, err := decodeDictionary(bencodedString)
+		if err != nil {
+			return result, 0, err
+		}
+		result = any(dict).(T)
+		return result, length, nil
 	} else {
-		return "", 0, fmt.Errorf("Only strings, integers, lists and dictionaries are supported at the moment. Got: %s", bencodedString)
+		return result, 0, fmt.Errorf("unsupported bencoded type: %s", string(bencodedString[0]))
 	}
 }
+
 func decodeDictionary(bencodedString string) (map[string]any, int, error) {
 	if bencodedString == "de" {
 		return map[string]any{}, 2, nil
@@ -101,7 +123,7 @@ func decodeDictionary(bencodedString string) (map[string]any, int, error) {
 		content = content[keyLength:]
 		totalLength += keyLength
 
-		value, valueLength, err := Decode(content)
+		value, valueLength, err := Decode[any](content)
 		if err != nil {
 			return nil, 0, fmt.Errorf("invalid dictionary value: %v", err)
 		}
@@ -132,7 +154,7 @@ func decodeList(bencodedString string) ([]any, int, error) {
 			return result, totalLength + 1, nil // +1 for the 'e'
 		}
 
-		value, consumed, err := Decode(content)
+		value, consumed, err := Decode[any](content)
 		if err != nil {
 			return nil, 0, err
 		}

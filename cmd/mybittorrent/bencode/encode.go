@@ -6,14 +6,22 @@ import (
 	"slices"
 )
 
-func Encode(value any) (string, error) {
-	switch v := value.(type) {
+func Encode[T any](value T) (string, error) {
+	switch v := any(value).(type) {
 	case string:
 		return fmt.Sprintf("%d:%s", len(v), v), nil
 	case []byte: // for info.pieces
 		return fmt.Sprintf("%d:%s", len(v), string(v)), nil
-	case int:
-		return fmt.Sprintf("i%de", v), nil
+	case int, int8, int16, int32, int64:
+		intVal := fmt.Sprintf("i%de", v)
+		return intVal, nil
+	case float32, float64:
+		return fmt.Sprintf("f%fe", v), nil
+	case bool:
+		if v {
+			return "i1e", nil
+		}
+		return "i0e", nil
 	case []any:
 		result := "l"
 		for _, item := range v {
@@ -32,7 +40,6 @@ func Encode(value any) (string, error) {
 			keys = append(keys, k)
 		}
 		slices.Sort(keys)
-
 		for _, key := range keys {
 			keyEncoded, err := Encode(key)
 			if err != nil {
@@ -49,6 +56,7 @@ func Encode(value any) (string, error) {
 		return "", fmt.Errorf("unsupported type for bencode encoding: %T", value)
 	}
 }
+
 func HashInfo(info *TorrentInfo) (string, []byte, error) {
 	infoMap := map[string]any{
 		"length":       info.Info.Length,
