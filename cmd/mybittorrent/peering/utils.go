@@ -2,19 +2,22 @@ package peering
 
 import (
 	"encoding/binary"
-
-	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
 )
 
+// dividePiece splits a piece into blocks of specified size
+// Using range and pre-allocation for better performance
 func dividePiece(pieceLength int, blockSize int) []Block {
-	var blocks []Block
+	numBlocks := (pieceLength + blockSize - 1) / blockSize
+	blocks := make([]Block, 0, numBlocks)
+
 	for begin := 0; begin < pieceLength; begin += blockSize {
-		end := begin + blockSize
-		if end > pieceLength {
-			end = pieceLength
-		}
-		blocks = append(blocks, Block{Begin: begin, Length: end - begin})
+		end := min(begin+blockSize, pieceLength)
+		blocks = append(blocks, Block{
+			Begin:  begin,
+			Length: end - begin,
+		})
 	}
+
 	return blocks
 }
 
@@ -24,15 +27,4 @@ func encodeRequest(index, begin, length int) []byte {
 	binary.BigEndian.PutUint32(payload[4:8], uint32(begin))
 	binary.BigEndian.PutUint32(payload[8:12], uint32(length))
 	return payload
-}
-
-func getPieceLength(pieceIndex int, info *bencode.TorrentInfo) int {
-	totalLength := info.Info.Length
-	pieceLength := info.Info.PieceLength
-	numPieces := (totalLength + pieceLength - 1) / pieceLength
-
-	if pieceIndex == numPieces-1 {
-		return totalLength - pieceLength*(numPieces-1)
-	}
-	return pieceLength
 }

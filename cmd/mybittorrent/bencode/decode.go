@@ -63,37 +63,34 @@ func Info(bencodedString string) (*TorrentInfo, error) {
 }
 
 func Decode[T any](bencodedString string) (T, int, error) {
-	var result T
-	if unicode.IsDigit(rune(bencodedString[0])) {
-		str, length, err := decodeString(bencodedString)
+	var empty T
+	
+	convertResult := func(value any, length int, err error) (T, int, error) {
 		if err != nil {
-			return result, 0, err
+			return empty, 0, err
 		}
-		result = any(str).(T)
-		return result, length, nil
-	} else if bencodedString[0] == 'i' {
-		intVal, length, err := decodeInteger(bencodedString)
-		if err != nil {
-			return result, 0, err
+		final, ok := value.(T)
+		if !ok {
+			return empty, 0, fmt.Errorf("type assertion failed: cannot convert %T to %T", value, empty)
 		}
-		result = any(intVal).(T)
-		return result, length, nil
-	} else if bencodedString[0] == 'l' {
-		list, length, err := decodeList(bencodedString)
-		if err != nil {
-			return result, 0, err
-		}
-		result = any(list).(T)
-		return result, length, nil
-	} else if bencodedString[0] == 'd' {
-		dict, length, err := decodeDictionary(bencodedString)
-		if err != nil {
-			return result, 0, err
-		}
-		result = any(dict).(T)
-		return result, length, nil
-	} else {
-		return result, 0, fmt.Errorf("unsupported bencoded type: %s", string(bencodedString[0]))
+		return final, length, nil
+	}
+
+	if len(bencodedString) == 0 {
+		return empty, 0, fmt.Errorf("empty bencoded string")
+	}
+
+	switch first := bencodedString[0]; {
+	case unicode.IsDigit(rune(first)):
+		return convertResult(decodeString(bencodedString))
+	case first == 'i':
+		return convertResult(decodeInteger(bencodedString))
+	case first == 'l':
+		return convertResult(decodeList(bencodedString))
+	case first == 'd':
+		return convertResult(decodeDictionary(bencodedString))
+	default:
+		return empty, 0, fmt.Errorf("unsupported bencoded type: %s", string(first))
 	}
 }
 

@@ -15,7 +15,7 @@ func PerformHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
 	handshake[0] = 19
 	copy(handshake[1:], []byte("BitTorrent protocol"))
 	copy(handshake[28:], infoHash)
-	copy(handshake[48:], []byte(PeerID))
+	copy(handshake[48:], []byte(peerID))
 
 	if _, err := conn.Write(handshake); err != nil {
 		return nil, err
@@ -86,6 +86,3 @@ func sendMessage(conn net.Conn, id byte, payload []byte) error {
 
 	return nil
 }
-
-// Move other protocol-related functions from main.go:
-// readMessage, sendMessage, exchangeMessages, etc.

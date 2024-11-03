@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/bencode"
+	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/magnet"
 	"github.com/codecrafters-io/bittorrent-starter-go/cmd/mybittorrent/peering"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -58,6 +59,11 @@ func main() {
 	case "download":
 		if err := handleDownload(os.Args); err != nil {
 			logger.Error("Failed to download", zap.Error(err))
+			os.Exit(1)
+		}
+	case "magnet_parse":
+		if err := handleMagnetParse(os.Args); err != nil {
+			logger.Error("Failed to parse magnet link", zap.Error(err))
 			os.Exit(1)
 		}
 	default:
@@ -260,6 +266,28 @@ func handleHandshake(args []string) error {
 
 	responsePeerID := response[48:68]
 	fmt.Printf("Peer ID: %x\n", responsePeerID)
+
+	return nil
+}
+
+func handleMagnetParse(args []string) error {
+	if len(args) < 3 {
+		return fmt.Errorf("usage: magnet_parse <magnet-link>")
+	}
+
+	magnetLink := args[2]
+	link, err := magnet.Parse(magnetLink)
+	if err != nil {
+		return fmt.Errorf("failed to parse magnet link: %w", err)
+	}
+
+	// At least one tracker is required
+	if len(link.Trackers) == 0 {
+		return fmt.Errorf("no trackers found in magnet link")
+	}
+
+	fmt.Printf("Tracker URL: %s\n", link.Trackers[0])
+	fmt.Printf("Info Hash: %s\n", link.InfoHash)
 
 	return nil
 }

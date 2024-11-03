@@ -33,4 +33,4 @@ type Block struct {
 	Length int
 }
 
-const PeerID = "-MY0001-123456789012"
+const peerID = "-MY0001-123456789012"
