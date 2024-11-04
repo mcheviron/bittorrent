@@ -17,6 +17,7 @@ type TrackerResponse struct {
 	Peers    string `json:"peers"`
 }
 
+// Peer represents a BitTorrent peer with its connection information
 type Peer struct {
 	IP   net.IP
 	Port uint16

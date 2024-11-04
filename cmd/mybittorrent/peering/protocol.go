@@ -8,14 +8,20 @@ import (
 	"net"
 )
 
+// Reserved bytes with extension bit (20th bit) set
+var reservedBytes = []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00}
+
 // PerformHandshake performs the BitTorrent handshake with a peer
 // Changed from performHandshake to PerformHandshake to make it public
 func PerformHandshake(conn net.Conn, infoHash []byte) ([]byte, error) {
-	handshake := make([]byte, 68)
-	handshake[0] = 19
-	copy(handshake[1:], []byte("BitTorrent protocol"))
-	copy(handshake[28:], infoHash)
-	copy(handshake[48:], []byte(peerID))
+	// Construct handshake message
+	pstr := "BitTorrent protocol"
+	handshake := make([]byte, 0, 68)
+	handshake = append(handshake, byte(len(pstr)))
+	handshake = append(handshake, pstr...)
+	handshake = append(handshake, reservedBytes...) // Use the new reserved bytes
+	handshake = append(handshake, infoHash...)
+	handshake = append(handshake, []byte(peerID)...)
 
 	if _, err := conn.Write(handshake); err != nil {
 		return nil, err

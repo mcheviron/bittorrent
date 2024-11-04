@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -28,54 +30,106 @@ func init() {
 
 func main() {
 	logger := zap.L()
-	command := os.Args[1]
 
-	switch command {
+	decodeCmd := flag.NewFlagSet("decode", flag.ExitOnError)
+	infoCmd := flag.NewFlagSet("info", flag.ExitOnError)
+	peersCmd := flag.NewFlagSet("peers", flag.ExitOnError)
+	handshakeCmd := flag.NewFlagSet("handshake", flag.ExitOnError)
+	downloadPieceCmd := flag.NewFlagSet("download_piece", flag.ExitOnError)
+	downloadCmd := flag.NewFlagSet("download", flag.ExitOnError)
+	magnetParseCmd := flag.NewFlagSet("magnet_parse", flag.ExitOnError)
+	magnetHandshakeCmd := flag.NewFlagSet("magnet_handshake", flag.ExitOnError)
+
+	downloadPieceOutput := downloadPieceCmd.String("o", "", "output file path")
+	downloadOutput := downloadCmd.String("o", "", "output file path")
+
+	if len(os.Args) < 2 {
+		logger.Error("Expected subcommand")
+		os.Exit(1)
+	}
+
+	var err error
+	switch os.Args[1] {
 	case "decode":
-		if err := handleDecode(os.Args); err != nil {
-			logger.Error("Failed to decode", zap.Error(err))
+		err = decodeCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse decode command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handleDecode(decodeCmd.Args())
+
 	case "info":
-		if err := handleInfo(os.Args); err != nil {
-			logger.Error("Failed to get info", zap.Error(err))
+		err = infoCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse info command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handleInfo(infoCmd.Args())
+
 	case "peers":
-		if err := handlePeers(os.Args); err != nil {
-			logger.Error("Failed to get peers", zap.Error(err))
+		err = peersCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse peers command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handlePeers(peersCmd.Args())
+
 	case "handshake":
-		if err := handleHandshake(os.Args); err != nil {
-			logger.Error("Failed to handshake", zap.Error(err))
+		err = handshakeCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse handshake command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handleHandshake(handshakeCmd.Args())
+
 	case "download_piece":
-		if err := handleDownloadPiece(os.Args); err != nil {
-			logger.Error("Failed to download piece", zap.Error(err))
+		err = downloadPieceCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse download_piece command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handleDownloadPiece(*downloadPieceOutput, downloadPieceCmd.Args())
+
 	case "download":
-		if err := handleDownload(os.Args); err != nil {
-			logger.Error("Failed to download", zap.Error(err))
+		err = downloadCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse download command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handleDownload(*downloadOutput, downloadCmd.Args())
+
 	case "magnet_parse":
-		if err := handleMagnetParse(os.Args); err != nil {
-			logger.Error("Failed to parse magnet link", zap.Error(err))
+		err = magnetParseCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse magnet_parse command", zap.Error(err))
 			os.Exit(1)
 		}
+		err = handleMagnetParse(magnetParseCmd.Args())
+
+	case "magnet_handshake":
+		err = magnetHandshakeCmd.Parse(os.Args[2:])
+		if err != nil {
+			logger.Error("Failed to parse magnet_handshake command", zap.Error(err))
+			os.Exit(1)
+		}
+		err = handleMagnetHandshake(magnetHandshakeCmd.Args())
+
 	default:
-		logger.Error("Unknown command", zap.String("command", command))
+		logger.Error("Unknown command", zap.String("command", os.Args[1]))
+		os.Exit(1)
+	}
+
+	if err != nil {
+		logger.Error("Command failed",
+			zap.String("command", os.Args[1]),
+			zap.Error(err),
+			zap.Strings("args", os.Args[2:]))
 		os.Exit(1)
 	}
 }
 
-// Command handlers
-
 func handleDecode(args []string) error {
-	bencodedValue := args[2]
+	bencodedValue := args[0]
 	decoded, _, err := bencode.Decode[any](bencodedValue)
 	if err != nil {
 		return err
@@ -86,29 +140,24 @@ func handleDecode(args []string) error {
 }
 
 func handleInfo(args []string) error {
-	logger := zap.L()
-	if len(args) < 3 {
-		logger.Error("File path is required for info command")
+	if len(args) < 1 {
 		return fmt.Errorf("file path required")
 	}
-	filePath := args[2]
+	filePath := args[0]
 
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		logger.Error("Failed to read file", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	info, err := bencode.Info(string(fileContent))
 	if err != nil {
-		logger.Error("Failed to decode file content", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to decode file content: %w", err)
 	}
 
 	hash, _, err := bencode.HashInfo(info)
 	if err != nil {
-		logger.Error("Failed to encode info", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to encode info: %w", err)
 	}
 
 	fmt.Printf("Tracker URL: %s\n", info.Announce)
@@ -126,50 +175,39 @@ func handleInfo(args []string) error {
 }
 
 func handlePeers(args []string) error {
-	logger := zap.L()
-	if len(args) < 3 {
-		logger.Error("File path is required for peers command")
+	if len(args) < 1 {
 		return fmt.Errorf("file path required")
 	}
-	filePath := args[2]
+	filePath := args[0]
 
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		logger.Error("Failed to read file", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	info, err := bencode.Info(string(fileContent))
 	if err != nil {
-		logger.Error("Failed to decode file content", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to decode file content: %w", err)
 	}
 
 	peers, err := peering.GetPeers(info)
 	if err != nil {
-		logger.Error("Failed to get peers", zap.Error(err))
-		return err
+		return fmt.Errorf("failed to get peers: %w", err)
 	}
 
 	for _, peer := range peers {
 		fmt.Printf("%s:%d\n", peer.IP, peer.Port)
 	}
-
 	return nil
 }
 
-func handleDownloadPiece(args []string) error {
-	if len(args) != 6 {
+func handleDownloadPiece(outputPath string, args []string) error {
+	if outputPath == "" || len(args) < 2 {
 		return fmt.Errorf("usage: download_piece -o <output-path> <torrent-file> <piece-index>")
 	}
 
-	if args[2] != "-o" {
-		return fmt.Errorf("expected -o flag, got: %s", args[2])
-	}
-	outputPath := args[3]
-	torrentPath := args[4]
-
-	pieceIndex, err := strconv.Atoi(args[5])
+	torrentPath := args[0]
+	pieceIndex, err := strconv.Atoi(args[1])
 	if err != nil {
 		return fmt.Errorf("invalid piece index: %v", err)
 	}
@@ -197,15 +235,12 @@ func handleDownloadPiece(args []string) error {
 	return os.WriteFile(outputPath, pieceData, 0644)
 }
 
-func handleDownload(args []string) error {
-	if len(args) != 5 {
+func handleDownload(outputPath string, args []string) error {
+	if outputPath == "" || len(args) < 1 {
 		return fmt.Errorf("usage: download -o <output-path> <torrent-file>")
 	}
-	if args[2] != "-o" {
-		return fmt.Errorf("expected -o flag, got: %s", args[2])
-	}
-	outputPath := args[3]
-	torrentPath := args[4]
+
+	torrentPath := args[0]
 
 	torrentData, err := os.ReadFile(torrentPath)
 	if err != nil {
@@ -231,12 +266,12 @@ func handleDownload(args []string) error {
 }
 
 func handleHandshake(args []string) error {
-	if len(args) < 4 {
+	if len(args) < 2 {
 		return fmt.Errorf("not enough arguments. Usage: handshake <torrent-file> <peer-address>")
 	}
 
-	torrentPath := args[2]
-	peerAddr := args[3]
+	torrentPath := args[0]
+	peerAddr := args[1]
 
 	torrentData, err := os.ReadFile(torrentPath)
 	if err != nil {
@@ -271,23 +306,72 @@ func handleHandshake(args []string) error {
 }
 
 func handleMagnetParse(args []string) error {
-	if len(args) < 3 {
+	if len(args) < 1 {
 		return fmt.Errorf("usage: magnet_parse <magnet-link>")
 	}
 
-	magnetLink := args[2]
+	magnetLink := args[0]
 	link, err := magnet.Parse(magnetLink)
 	if err != nil {
 		return fmt.Errorf("failed to parse magnet link: %w", err)
 	}
 
-	// At least one tracker is required
 	if len(link.Trackers) == 0 {
 		return fmt.Errorf("no trackers found in magnet link")
 	}
 
 	fmt.Printf("Tracker URL: %s\n", link.Trackers[0])
 	fmt.Printf("Info Hash: %s\n", link.InfoHash)
+
+	return nil
+}
+
+func handleMagnetHandshake(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: magnet_handshake <magnet-link>")
+	}
+
+	magnetLink := args[0]
+	link, err := magnet.Parse(magnetLink)
+	if err != nil {
+		return fmt.Errorf("failed to parse magnet link: %w", err)
+	}
+
+	// Convert hex info hash to bytes
+	infoHash, err := hex.DecodeString(link.InfoHash)
+	if err != nil {
+		return fmt.Errorf("failed to decode info hash: %w", err)
+	}
+
+	// Get peers from tracker
+	trackerURL := link.Trackers[0]
+	peers, err := peering.GetPeersFromTracker(trackerURL, infoHash)
+	if err != nil {
+		return fmt.Errorf("failed to get peers: %w", err)
+	}
+
+	if len(peers) == 0 {
+		return fmt.Errorf("no peers available")
+	}
+
+	// Connect to first peer
+	peer := peers[0]
+	peerAddr := fmt.Sprintf("%s:%d", peer.IP, peer.Port)
+	conn, err := net.DialTimeout("tcp", peerAddr, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to connect to peer: %w", err)
+	}
+	defer conn.Close()
+
+	// Perform handshake with extension bit set
+	response, err := peering.PerformHandshake(conn, infoHash)
+	if err != nil {
+		return fmt.Errorf("handshake failed: %w", err)
+	}
+
+	// Extract and print peer ID
+	peerID := response[48:68]
+	fmt.Printf("Peer ID: %x\n", peerID)
 
 	return nil
 }
